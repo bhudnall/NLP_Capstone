@@ -1,0 +1,181 @@
+## Data Science Capstone - NLP
+###### Author: Brian Hudnall
+###### Date: 12/28
+
+#### Title: Word Prediction NLP Analysis by Brian Hudnall
+
+##### Analysis Purpose: 
+
+Natural Language Processing is used in this analysis to derive meaning from human or natural language input. The data set is comprised of text from english based tweets, blogs and news articles. After all data is combined, it is then cleaned to remove punctuation, whitespace, numbers and profanity. High frequency counts are displayed and n-grams are used to understand high frequency phrases.
+
+##### Next Steps:
+    
+    1. Evaluate and optimize models for efficiency and accuracy
+    2. Create a dynamic ShinyApp that takes user input and uses the model for output
+    3. Add visualizations to the final ShinyApp 
+
+#### Data Injection and Manipulation:
+
+Load the necessary packages used in analysis.
+
+```{r message=FALSE, warning=FALSE}
+library(tm)
+library(openNLP)
+library(RWeka)
+library(dplyr)
+library(ggplot2)
+library(cluster)
+```
+
+Set the working directory and then load the profanity list that will be used to remove negative words from the data set. Also create the createSample function. This function uses the rbinom function to create a random sample of each data source which will be used in the Corpus. The probability (prob) variable will be used in the createSample function to inform it the probability of success for each individual trial.
+
+```{r}
+setwd("/Users/brianhudnall/Programming/R/NLP_Capstone/final")
+
+## DATA GATHERING SECTION
+prob <- 0.5
+profanity <- read.table("profanity.txt"
+                    , header = FALSE
+                    , sep = "\n")
+
+createSample <- function(lines_file, size, prob) {
+    lines_file <- lines_file[rbinom(
+        length(lines_file) * size,
+        length(lines_file),
+        prob
+    )]
+    return(lines_file)
+}
+```
+
+The only data sets used in the exploration section are from the US folder; tweets, blog posts and news data sources. The data pulled in uses readLines and skips Null values. Line counts are also created after pulling the data. After connecting and pulling in the data, the createSample function is then called to trim the data set down to a manageable size. After collecting the data, the connections are then closed.
+
+```{r}
+set.seed(333)
+
+us_twitter <- file("en_US/en_US.twitter.txt", "r") 
+twitter_lines <- readLines(us_twitter, skipNul = TRUE) 
+# Sample Twitter data
+twitter_lines <- createSample(twitter_lines, .003, prob)
+## twitter_lines <- sample_frac(as.data.frame(twitter_lines), .003)
+length(twitter_lines)
+
+
+us_blogs <- file("en_US/en_US.blogs.txt", "r")
+blogs_lines <- readLines(us_blogs, skipNul = TRUE)
+# Sample Blog data
+blogs_lines <- createSample(blogs_lines, .006, prob)
+## blogs_lines <- sample_frac(as.data.frame(blogs_lines), .006)
+length(blogs_lines)
+
+
+us_news <- file("en_US/en_US.news.txt", "r")
+news_lines <- readLines(us_news, skipNul = TRUE)
+# Sample News data
+news_lines <- createSample(news_lines, .006, prob)
+## news_lines <- sample_frac(as.data.frame(news_lines), .006)
+length(news_lines)
+
+## Close all connections with finished
+close(us_twitter)
+close(us_blogs)
+close(us_news)
+```
+
+All data is then concatenated into one final set called lines_collapsed. This data is then converted into a vector source. The Corpus is then created off of the Vector Source. The tm package is then heavily used to:
+
+    1. Convert the characters to lowercase
+    2. Remove punctuation from characters
+    3. Strip whitespace 
+    4. Remove numbers 
+    5. Use the profanity data set to remove all words contained within that data source.
+
+```{r}
+lines_collapsed <- paste(twitter_lines
+                         , blogs_lines
+                         , news_lines
+                         , collapse = " ")
+lines_source <- VectorSource(lines_collapsed)
+
+# Create Corpus
+us_corpus <- Corpus(lines_source)
+
+# Convert to lower
+us_corpus <- tm_map(us_corpus
+                    , content_transformer(tolower))
+# Remove Punctuation
+us_corpus <- tm_map(us_corpus
+                    , removePunctuation)
+# Strip whitespace
+us_corpus <- tm_map(us_corpus
+                    , stripWhitespace)
+# Remove numbers
+us_corpus <- tm_map(us_corpus
+                    , removeNumbers)
+# Remove Bad words
+us_corpus <- tm_map(us_corpus
+                    , removeWords, profanity[1,])
+
+# Completed preprocessing
+us_corpus <- tm_map(us_corpus
+                    , PlainTextDocument)
+```
+
+The document-term matrix is then created and converted into an actual matrix. Sparse terms are then removed from the data set that has less then the 0.10 sparsity threshold.
+
+```{r}
+# Includes all words except profanity
+doc_matrix <- DocumentTermMatrix(us_corpus)
+doc_matrix <- removeSparseTerms(doc_matrix, 0.10)
+doc_matrix
+doc_as_matrix <- as.matrix(doc_matrix)
+```
+
+Frequency is then created and sorted to see the terms that have the highest counts (top 6) and also the total unique term count (20,956). The top term is "the". Terms that have counts higher than 500 are also looked at.
+
+```{r}
+## Sort terms to see the highest frequency
+frequency <- colSums(doc_as_matrix)
+frequency_sort <- sort(frequency, decreasing = TRUE)
+head(frequency_sort)
+
+## Show terms with higher than 500 count
+findFreqTerms(doc_matrix, lowfreq = 500)
+```
+
+A Bigram and a Trigram are then created to model the highest probability sequences in sets of two and three words. The top 20 are then plotted.
+
+```{r}
+## Make Bi Gram
+bigram <- NGramTokenizer(us_corpus
+                         , Weka_control(min=2, max=2))
+bigram_df <- as.data.frame(table(bigram))
+bigram_df_sort <- bigram_df[order(bigram_df$Freq
+                                  , decreasing = TRUE),]
+
+## Filter to top 20 then chart
+bigram_df_top <- bigram_df_sort[1:20,]
+colnames(bigram_df_top) <- c("Phrase", "Count")
+ggplot(bigram_df_top, aes(x=reorder(Phrase, Count), y=Count)) +
+    geom_bar(stat='identity') +
+    coord_flip() +
+    ggtitle("Top Bigram Phrases by Count") +
+    xlab("Phrases") +
+    theme_minimal()
+
+## Make Tri Gram
+trigram <- NGramTokenizer(us_corpus
+                          , Weka_control(min=3, max=3))
+trigram_df <- as.data.frame(table(trigram))
+trigram_df_sort <- trigram_df[order(trigram_df$Freq
+                                    , decreasing = TRUE),]
+## filter to top 20 then chart
+trigram_df_top <- trigram_df_sort[1:20,]
+colnames(trigram_df_top) <- c("Phrase", "Count")
+ggplot(trigram_df_top, aes(x=reorder(Phrase, Count), y=Count)) +
+    geom_bar(stat='identity') +
+    coord_flip() +
+    ggtitle("Top Trigram Phrases by Count") +
+    xlab("Phrases") +
+    theme_minimal()
+```
